@@ -55,7 +55,10 @@ uint8_t *mux; // choose between global and local predictor; "chooser"
               // 0=strong local, 1=weak local, 2=weak global, 3=strong global
 
 // custom (YAGS)
-
+// use gshare as base predictor
+uint8_t *T_exceptions; // tab;e for alternate taken predictions
+uint8_t *NT_exceptions; // table for alternate not taken predictions
+uint32_t *tags; // table for tags of exception table entries
 
 //------------------------------------//
 //        Predictor Functions         //
@@ -227,7 +230,97 @@ void train_tournament(uint32_t pc, uint8_t outcome)
 }
 
 // Custom (YAGS) ***********************************************
+void init_yags() {
+  int bht_entries = 1 << ghistoryBits;
+  int exception_size = 1 << exceptionBits;
 
+  bht_gshare = (uint8_t *)malloc(bht_entries * sizeof(uint8_t));
+  T_exceptions = (uint8_t *)malloc(exception_size * sizeof(uint8_t));
+  NT_exceptions = (uint8_t *)malloc(exception_size * sizeof(uint8_t));
+  tags = (uint32_t *)malloc(exception_size * sizeof(uint32_t));
+
+  // init predictor (gshare) (weakly NT)
+  for (int i = 0; i < bht_entries; i++) {
+      bht_gshare[i] = WN;
+  }
+
+  // init exception tables
+  for (int i = 0; i < exception_size; i++) {
+      T_exceptions[i] = WN;
+      NT_exceptions[i] = WN;
+      tags[i] = 0xFFFFFFFF; // init to some invalid tag
+  }
+  ghistory = 0;
+}
+
+uint8_t yags_predict(uint32_t pc) {
+  uint32_t bht_entries = 1 << ghistoryBits;
+  uint32_t exception_entries = 1 << exceptionBits;
+
+  /*uint32_t pc_lower_bits = pc & (bht_entries - 1);
+  uint32_t ghistory_lower_bits = ghistory & (bht_entries - 1);
+  uint32_t bht_index = pc_lower_bits ^ ghistory_lower_bits;*/
+
+  uint32_t bht_index = (pc ^ ghistory) & (bht_entries - 1);
+  uint32_t exception_index = (pc ^ ghistory) & (exception_entries - 1);
+  // let the lower PC bits be tag
+  uint32_t pc_tag = (pc & 0xFFFFF); 
+
+  // does an exception table entry override gshare?
+  if (tags[exception_index] == pc_tag) {
+      if (T_exceptions[exception_index] == WT || T_exceptions[exception_index] == ST)
+          return TAKEN;
+      if (NT_exceptions[exception_index] == WN || NT_exceptions[exception_index] == SN)
+          return NOTTAKEN;
+  }
+  // use gshare
+  return (bht_gshare[bht_index] == WT || bht_gshare[bht_index] == ST) ? TAKEN : NOTTAKEN;
+}
+
+void train_yags(uint32_t pc, uint8_t outcome) {
+  uint32_t bht_entries = 1 << ghistoryBits;
+  uint32_t exception_entries = 1 << exceptionBits;
+
+  uint32_t bht_index = (pc ^ ghistory) & (bht_entries - 1);
+  uint32_t exception_index = (pc ^ ghistory) & (exception_entries - 1);
+  // let the lower PC bits be tag
+  uint32_t pc_tag = (pc & 0xFFFFF); 
+
+  // gshare predict
+  uint8_t gshare_pred = (bht_gshare[bht_index] == WT || bht_gshare[bht_index] == ST) ? TAKEN : NOTTAKEN;
+
+  // gshare RIGHT, update normally
+  if (gshare_pred == outcome) {
+    if (outcome == TAKEN) {
+      if (bht_gshare[bht_index] < ST) bht_gshare[bht_index]++;
+    } else {
+      if (bht_gshare[bht_index] > SN) bht_gshare[bht_index]--;
+    }
+  } else {
+    // gshare WRONG, update exception table
+    tags[exception_index] = pc_tag;
+
+    if (outcome == TAKEN) {
+      // taken exception++
+      T_exceptions[exception_index] = 
+          (T_exceptions[exception_index] < ST) ? (T_exceptions[exception_index] + 1) : ST;
+    } else {
+      // not taken exception--
+      NT_exceptions[exception_index] = 
+          (NT_exceptions[exception_index] > SN) ? (NT_exceptions[exception_index] - 1) : SN;
+    }
+  }
+  // update global history register
+  ghistory = ((ghistory << 1) | outcome);
+}
+
+void cleanup_yags()
+{
+    free(bht_gshare);
+    free(T_exceptions);
+    free(NT_exceptions);
+    free(tags);
+}
 
 void cleanup_gshare()
 {
@@ -255,6 +348,7 @@ void init_predictor()
     init_tournament();
     break;
   case CUSTOM:
+    init_yags();
     break;
   default:
     break;
@@ -278,7 +372,7 @@ uint32_t make_prediction(uint32_t pc, uint32_t target, uint32_t direct)
   case TOURNAMENT:
     return tournament_predict(pc);
   case CUSTOM:
-    return NOTTAKEN;
+    return yags_predict(pc);
   default:
     break;
   }
@@ -305,7 +399,7 @@ void train_predictor(uint32_t pc, uint32_t target, uint32_t outcome, uint32_t co
     case TOURNAMENT:
       return train_tournament(pc, outcome);
     case CUSTOM:
-      return;
+      return train_yags(pc, outcome);
     default:
       break;
     }
