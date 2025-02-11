@@ -31,7 +31,9 @@ int verbose;
 
 int lhistoryBits = 10; // number of bits for local history
 int pcIndexBits = 10; // bits to index LHT
-int muxBits = 12; // bits for mux
+int muxBits = 12; // bits for mux (chooser)
+
+int exceptionBits = 10; // bits for exception table
 
 //------------------------------------//
 //      Predictor Data Structures     //
@@ -43,13 +45,16 @@ int muxBits = 12; // bits for mux
 // gshare
 uint8_t *bht_gshare; // global predictor
 uint64_t ghistory; // GHR: tracks outcomes of last N branches
-// Tournament
+
+// Tournament: choose btwn local and global predicts
 uint8_t *bht_tourney; // global predictor
 // use same GHR
 uint8_t *lht; // LHT: store recent outcomes specific to branch (pc)
 uint8_t *local_pht;
-uint8_t *mux; // choose between global and local predictor;
+uint8_t *mux; // choose between global and local predictor; "chooser"
               // 0=strong local, 1=weak local, 2=weak global, 3=strong global
+
+// custom (YAGS)
 
 
 //------------------------------------//
@@ -127,13 +132,13 @@ void train_gshare(uint32_t pc, uint8_t outcome)
   ghistory = ((ghistory << 1) | outcome);
 }
 
-// Tournament functions
+// Tournament functions ***************************************
 void init_tournament()
 {
   int bht_entries = 1 << ghistoryBits;
   int lht_entries = 1 << pcIndexBits;
   int mux_entries = 1 << muxBits;
-
+    
   // table setup
   bht_tourney = (uint8_t *)malloc(bht_entries * sizeof(uint8_t));
   local_pht = (uint8_t *)malloc(bht_entries * sizeof(uint8_t));
@@ -167,8 +172,8 @@ uint8_t tournament_predict(uint32_t pc)
   uint32_t mux_index = pc & (mux_entries - 1);
 
   // predict!
-  uint8_t global_pred = (bht_tourney[global_index] >= WT) ? TAKEN : NOTTAKEN;
-  uint8_t local_pred = (local_pht[local_index] >= WT) ? TAKEN : NOTTAKEN;
+  uint8_t global_pred = (bht_tourney[global_index] == WT || bht_tourney[global_index] == ST) ? TAKEN : NOTTAKEN;
+  uint8_t local_pred = (local_pht[local_index] == WT || local_pht[local_index] == ST) ? TAKEN : NOTTAKEN;
   uint8_t choice = mux[mux_index];
 
   // choose between predictors
@@ -186,14 +191,16 @@ void train_tournament(uint32_t pc, uint8_t outcome)
   uint32_t mux_index = pc & (mux_entries - 1);
 
   // predict!
-  uint8_t global_pred = (bht_tourney[global_index] >= WT) ? TAKEN : NOTTAKEN;
-  uint8_t local_pred = (local_pht[local_index] >= WT) ? TAKEN : NOTTAKEN;
+  uint8_t global_pred = (bht_tourney[global_index] == WT || bht_tourney[global_index] == ST) ? TAKEN : NOTTAKEN;
+  uint8_t local_pred = (local_pht[local_index] == WT || local_pht[local_index] == ST) ? TAKEN : NOTTAKEN;
 
-  // global update state
-  if (outcome == TAKEN) {
-    if (bht_tourney[global_index] < ST) bht_tourney[global_index]++;
-  } else {
-    if (bht_tourney[global_index] > SN) bht_tourney[global_index]--;
+  // mux update state
+  if (global_pred == outcome && local_pred != outcome) {
+    // lean global
+    if (mux[mux_index] < 3) mux[mux_index]++;
+  } else if (global_pred != outcome && local_pred == outcome) {
+    // lean local
+    if (mux[mux_index] > 0) mux[mux_index]--;
   }
 
   // local update state
@@ -203,21 +210,24 @@ void train_tournament(uint32_t pc, uint8_t outcome)
     if (local_pht[local_index] > SN) local_pht[local_index]--;
   }
 
-  // mux update state
-  if (global_pred == outcome && local_pred != outcome) {
-    if (mux[mux_index] < 3) mux[mux_index]++;
-  } else if (global_pred != outcome && local_pred == outcome) {
-    if (mux[mux_index] > 0) mux[mux_index]--;
+  // global update state
+  if (outcome == TAKEN) {
+    if (bht_tourney[global_index] < ST) bht_tourney[global_index]++;
+  } else {
+    if (bht_tourney[global_index] > SN) bht_tourney[global_index]--;
   }
+
 
   // update LHT
   // (old bits) | outcome
-  // bit mask ((1 << lhistoryBits) - 1) to make sure does not exceed bit width
   lht[pc & (lht_entries - 1)] = ((lht[pc & (lht_entries - 1)] << 1) | outcome);
 
   // update global history register
   ghistory = ((ghistory << 1) | outcome);
 }
+
+// Custom (YAGS) ***********************************************
+
 
 void cleanup_gshare()
 {

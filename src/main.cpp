@@ -9,6 +9,10 @@
 #include <string.h>
 #include "predictor.h"
 
+// temp solution to compile
+#include <iostream>
+#include <sstream> // For std::istringstream
+
 FILE *stream;
 char *buf = NULL;
 size_t len = 0;
@@ -69,7 +73,7 @@ int handle_option(char *arg)
 //
 // Returns True if Successful
 //
-int read_branch(uint32_t *pc, uint32_t *target, uint32_t *outcome, uint32_t *condition, uint32_t *call, uint32_t *ret, uint32_t *direct)
+/*int read_branch(uint32_t *pc, uint32_t *target, uint32_t *outcome, uint32_t *condition, uint32_t *call, uint32_t *ret, uint32_t *direct)
 {
   if (getline(&buf, &len, stream) == -1)
   {
@@ -79,6 +83,27 @@ int read_branch(uint32_t *pc, uint32_t *target, uint32_t *outcome, uint32_t *con
   sscanf(buf, "0x%x\t0x%x\t%d\t%d\t%d\t%d\t%d\n", pc, target, outcome, condition, call, ret, direct);
 
   return 1;
+}*/
+
+// Function to read and parse a branch line
+int read_branch(uint32_t* pc, uint32_t* target, uint32_t* outcome, uint32_t* condition,
+                uint32_t* call, uint32_t* ret, uint32_t* direct) {
+    static std::string buf; // Static buffer for reading lines
+    static std::istream& stream = std::cin; // Use standard input stream by default
+
+    // Read a line from the input stream
+    if (!std::getline(stream, buf)) {
+        return 0; // Return 0 if no more lines or an error occurs
+    }
+
+    // Parse the line using a string stream
+    std::istringstream iss(buf);
+    if (!(iss >> std::hex >> *pc >> *target >> std::dec >> *outcome >> *condition
+                >> *call >> *ret >> *direct)) {
+        return 0; // Return 0 if parsing fails
+    }
+
+    return 1; // Return 1 if parsing succeeds
 }
 
 int main(int argc, char *argv[])
