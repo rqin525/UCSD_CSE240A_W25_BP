@@ -29,11 +29,14 @@ int ghistoryBits = 17; // Number of bits used for Global History
 int bpType;            // Branch Prediction Type
 int verbose;
 
-int lhistoryBits = 10; // number of bits for local history
-int pcIndexBits = 10; // bits to index LHT
-int muxBits = 12; // bits for mux (chooser)
+int ghistoryBitsT = 16;
+int lhistoryBits = 12; // number of bits for local history
+int pcIndexBits = 12; // bits to index LHT
+int muxBits = 14; // bits for mux (chooser)
 
-int exceptionBits = 10; // bits for exception table
+int exceptionBits = 12; // bits for exception table
+int ghistoryBitsYAGS = 16;
+int tagBits = 15;
 
 //------------------------------------//
 //      Predictor Data Structures     //
@@ -138,19 +141,22 @@ void train_gshare(uint32_t pc, uint8_t outcome)
 // Tournament functions ***************************************
 void init_tournament()
 {
-  int bht_entries = 1 << ghistoryBits;
+  int bht_entries = 1 << ghistoryBitsT;
   int lht_entries = 1 << pcIndexBits;
+  int lpht_entries = 1 << lhistoryBits;
   int mux_entries = 1 << muxBits;
     
   // table setup
   bht_tourney = (uint8_t *)malloc(bht_entries * sizeof(uint8_t));
-  local_pht = (uint8_t *)malloc(bht_entries * sizeof(uint8_t));
+  local_pht = (uint8_t *)malloc(lpht_entries * sizeof(uint8_t));
   lht = (uint8_t *)malloc(lht_entries * sizeof(uint8_t));
   mux = (uint8_t *)malloc(mux_entries * sizeof(uint8_t));
 
   // init predictors (weakly not taken)
   for (int i = 0; i < bht_entries; i++) {
     bht_tourney[i] = WN;
+  }
+  for (int i = 0; i < lpht_entries; i++) {
     local_pht[i] = WN;
   }
   for (int i = 0; i < lht_entries; i++) {
@@ -166,7 +172,7 @@ void init_tournament()
 
 uint8_t tournament_predict(uint32_t pc)
 {
-  uint32_t bht_entries = 1 << ghistoryBits;
+  uint32_t bht_entries = 1 << ghistoryBitsT;
   uint32_t lht_entries = 1 << pcIndexBits;
   uint32_t mux_entries = 1 << muxBits;
 
@@ -185,7 +191,7 @@ uint8_t tournament_predict(uint32_t pc)
 
 void train_tournament(uint32_t pc, uint8_t outcome)
 {
-  uint32_t bht_entries = 1 << ghistoryBits;
+  uint32_t bht_entries = 1 << ghistoryBitsT;
   uint32_t lht_entries = 1 << pcIndexBits;
   uint32_t mux_entries = 1 << muxBits;
 
@@ -231,7 +237,7 @@ void train_tournament(uint32_t pc, uint8_t outcome)
 
 // Custom (YAGS) ***********************************************
 void init_yags() {
-  int bht_entries = 1 << ghistoryBits;
+  int bht_entries = 1 << ghistoryBitsYAGS;
   int exception_size = 1 << exceptionBits;
 
   bht_gshare = (uint8_t *)malloc(bht_entries * sizeof(uint8_t));
@@ -254,7 +260,7 @@ void init_yags() {
 }
 
 uint8_t yags_predict(uint32_t pc) {
-  uint32_t bht_entries = 1 << ghistoryBits;
+  uint32_t bht_entries = 1 << ghistoryBitsYAGS;
   uint32_t exception_entries = 1 << exceptionBits;
 
   /*uint32_t pc_lower_bits = pc & (bht_entries - 1);
@@ -264,7 +270,7 @@ uint8_t yags_predict(uint32_t pc) {
   uint32_t bht_index = (pc ^ ghistory) & (bht_entries - 1);
   uint32_t exception_index = (pc ^ ghistory) & (exception_entries - 1);
   // let the lower PC bits be tag
-  uint32_t pc_tag = (pc & 0xFFFFF); 
+  uint32_t pc_tag = ((pc) & 0xFFFFF); 
 
   // does an exception table entry override gshare?
   if (tags[exception_index] == pc_tag) {
@@ -278,13 +284,13 @@ uint8_t yags_predict(uint32_t pc) {
 }
 
 void train_yags(uint32_t pc, uint8_t outcome) {
-  uint32_t bht_entries = 1 << ghistoryBits;
+  uint32_t bht_entries = 1 << ghistoryBitsYAGS;
   uint32_t exception_entries = 1 << exceptionBits;
 
   uint32_t bht_index = (pc ^ ghistory) & (bht_entries - 1);
   uint32_t exception_index = (pc ^ ghistory) & (exception_entries - 1);
   // let the lower PC bits be tag
-  uint32_t pc_tag = (pc & 0xFFFFF); 
+  uint32_t pc_tag = ((pc) & 0xFFFFF); 
 
   // gshare predict
   uint8_t gshare_pred = (bht_gshare[bht_index] == WT || bht_gshare[bht_index] == ST) ? TAKEN : NOTTAKEN;
@@ -298,6 +304,8 @@ void train_yags(uint32_t pc, uint8_t outcome) {
     }
   } else {
     // gshare WRONG, update exception table
+    // less aggressive: update only if strongly mispredicts
+    //if (bht_gshare[bht_index] == SN || bht_gshare[bht_index] == ST) 
     tags[exception_index] = pc_tag;
 
     if (outcome == TAKEN) {
